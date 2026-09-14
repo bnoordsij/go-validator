@@ -9,6 +9,9 @@ import (
 )
 
 func main() {
+
+	http.HandleFunc("/status", statusHandler)
+	http.HandleFunc("/validate", validateHandler)
 	http.HandleFunc("/hello", func(w http.ResponseWriter, req *http.Request) {
 		msg := "Hello!"
 		w.Write([]byte(msg))

@@ -2,10 +2,8 @@ package main
 
 import (
 	"bufio"
-	"context"
 	"crypto/md5"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -209,8 +207,3 @@ func checkDomain(domain string, client *http.Client) string {
 	return ""
 }
 
-func main() {
-	http.HandleFunc("/status", statusHandler)
-	http.HandleFunc("/validate", validateHandler)
-	http.ListenAndServe(":8080", nil)
-}
