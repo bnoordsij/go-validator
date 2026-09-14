@@ -12,18 +12,15 @@ func main() {
 
 	http.HandleFunc("/status", statusHandler)
 	http.HandleFunc("/validate", validateHandler)
+	http.HandleFunc("/output", outputHandler)
 
         http.HandleFunc("/tst-example", func(w http.ResponseWriter, req *http.Request) {
                 out, err := os.Create("output.txt")
-		if err != nil {
- 			panic(err)
-		}
+		check(err)
 		defer out.Close()
 
                 resp, err := http.Get("http://example.com/")
-		if err != nil {
- 			panic(err)
-		}
+		check(err)
                 defer resp.Body.Close()
 
                 io.Copy(out, resp.Body)
@@ -36,9 +33,7 @@ func main() {
 	})
 	http.HandleFunc("/echo", func(w http.ResponseWriter, req *http.Request) {
 		b, err := io.ReadAll(req.Body)
-		if err != nil {
-			panic(err)
-		}
+		check(err)
 		io.Copy(w, bytes.NewReader(b))
 	})
 	workers.Serve(nil) // use http.DefaultServeMux

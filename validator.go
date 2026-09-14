@@ -35,6 +35,12 @@ func init() {
 	os.MkdirAll(workDir, 0755)
 }
 
+func check(e error) {
+    if e != nil {
+        panic(e)
+    }
+}
+
 func slugify(s string) string {
 	h := md5.Sum([]byte(s))
 	return fmt.Sprintf("%x", h)[:16]
@@ -77,6 +83,20 @@ func validateHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	fmt.Fprintf(w, `{"status":"%s","total":%d,"success":%d,"failed":%d,"current_domain":"%s","current_count":%d,"download_url":"%s"}`,
 		job.Status, job.Total, job.Success, job.Failed, job.CurrentDomain, job.CurrentCount, job.DownloadURL)
+}
+
+func outputHandler(w http.ResponseWriter, r *http.Request) {
+        linkStr := r.URL.Query().Get("link")
+        if linkStr == "" {
+                http.Error(w, "missing ?link parameter", 400)
+                return
+        }
+
+        slug := slugify(linkStr)
+	resultFile := filepath.Join(workDir, slug+".txt")
+	data, err := os.ReadFile(resultFile)
+	check(err)
+    	fmt.Fprintf(w, string(data))
 }
 
 func processJob(slug, linkStr string, offset int) {
