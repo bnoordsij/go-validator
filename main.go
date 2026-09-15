@@ -36,5 +36,15 @@ func main() {
 		check(err)
 		io.Copy(w, bytes.NewReader(b))
 	})
+	statusUrl := os.Getenv("STATUS_URL")
+	if (statusUrl != "")  {
+		resp, err := http.Get(statusUrl)
+		check(err)
+		resp.Body.Close()
+	}
+	touchFilename := "touch.txt"
+	os.OpenFile(touchFilename, os.O_RDONLY|os.O_CREATE, 0666)
+
+	
 	workers.Serve(nil) // use http.DefaultServeMux
 }
