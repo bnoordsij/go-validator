@@ -2,8 +2,10 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"crypto/md5"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -51,19 +53,57 @@ func statusHandler(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, `{"status":"ok"}`)
 }
 
+func loopbackHandler(w http.ResponseWriter, r *http.Request) {
+//     w.Header().Set("Content-Type", "plain/text")
+//     fmt.Fprintf(w, "Method: %s, Content-Type: %s\n", r.Method, r.Header.Get("Content-Type"))
+
+    if r.Body == nil {
+          fmt.Fprintln(w, "Body is nil")
+          http.Error(w, "body is nil", 400)
+          return
+    }
+
+    body, _ := io.ReadAll(r.Body)
+//     fmt.Fprintf(w, "Body length: %d, content: %s\n", len(body), string(body))
+    w.Write(body)
+}
+
 func validateHandler(w http.ResponseWriter, r *http.Request) {
-	linkStr := r.URL.Query().Get("link")
+	var domains []string
+	var source string
 	offset := 0
 	if o := r.URL.Query().Get("offset"); o != "" {
 		offset, _ = strconv.Atoi(o)
 	}
 
-	if linkStr == "" {
-		http.Error(w, "missing ?link parameter", 400)
-		return
+	// Try body first (local testing)
+	if r.Method == "POST" && r.Body != nil {
+		scanner := bufio.NewScanner(r.Body)
+		for scanner.Scan() {
+			domain := strings.TrimSpace(scanner.Text())
+			if domain != "" {
+				domains = append(domains, domain)
+			}
+		}
+		source = "body"
 	}
 
-	slug := slugify(linkStr)
+	// Fallback to ?link parameter
+	if len(domains) == 0 {
+		linkStr := r.URL.Query().Get("link")
+		if linkStr == "" {
+			http.Error(w, "missing body domains or ?link parameter", 400)
+			return
+		}
+		source = "link:" + linkStr
+	}
+
+// 	w.Header().Set("Content-Type", "application/json")
+// 	fmt.Fprintf(w, `{"method":"%s","body":"%s","domains":"%s"}`,
+// 		r.Method, r.Body, strings.Join(domains, " _ "))
+//     return
+
+	slug := slugify(source)
 	jobsMu.Lock()
 	job, exists := jobs[slug]
 	jobsMu.Unlock()
@@ -74,15 +114,19 @@ func validateHandler(w http.ResponseWriter, r *http.Request) {
 		jobs[slug] = job
 		jobsMu.Unlock()
 
-		go processJob(slug, linkStr, offset)
+		if source == "body" {
+			go processJobFromDomains(slug, domains, offset)
+		} else {
+			go processJobFromLink(slug, source[5:], offset)
+		}
 	}
 
 	job.mu.Lock()
 	defer job.mu.Unlock()
 
 	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w, `{"status":"%s","total":%d,"success":%d,"failed":%d,"current_domain":"%s","current_count":%d,"download_url":"%s"}`,
-		job.Status, job.Total, job.Success, job.Failed, job.CurrentDomain, job.CurrentCount, job.DownloadURL)
+	fmt.Fprintf(w, `{"count":"%s","status":"%s","total":%d,"success":%d,"failed":%d,"current_domain":"%s","current_count":%d,"download_url":"%s"}`,
+		len(domains), job.Status, job.Total, job.Success, job.Failed, job.CurrentDomain, job.CurrentCount, job.DownloadURL)
 }
 
 func outputHandler(w http.ResponseWriter, r *http.Request) {
@@ -99,21 +143,11 @@ func outputHandler(w http.ResponseWriter, r *http.Request) {
     	fmt.Fprintf(w, string(data))
 }
 
-func processJob(slug, linkStr string, offset int) {
+func processDomains(slug string, domains []string, offset int) {
 	job := jobs[slug]
 	job.mu.Lock()
 	job.Status = "running"
 	job.mu.Unlock()
-
-	// Download domain list
-	resp, err := http.Get(linkStr)
-	if err != nil {
-		job.mu.Lock()
-		job.Status = "failed"
-		job.mu.Unlock()
-		return
-	}
-	defer resp.Body.Close()
 
 	resultFile := filepath.Join(workDir, slug+".txt")
 	progressFile := filepath.Join(workDir, slug+".progress")
@@ -127,23 +161,15 @@ func processJob(slug, linkStr string, offset int) {
 		},
 	}
 
-	scanner := bufio.NewScanner(resp.Body)
-	domains := []string{}
-	count := 0
-	for scanner.Scan() {
-		domains = append(domains, strings.TrimSpace(scanner.Text()))
-		count++
-	}
-
 	job.mu.Lock()
 	job.Total = len(domains)
 	job.mu.Unlock()
 
-	// TODO: implement proper batching for very large lists
 	sem := make(chan struct{}, 2000)
 	var wg sync.WaitGroup
 
 	for i, domain := range domains {
+	    fmt.Printf("%d _ " + domain + "\r\n", i)
 		if i < offset {
 			continue
 		}
@@ -154,9 +180,9 @@ func processJob(slug, linkStr string, offset int) {
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			finalDomain := checkDomain(d, client)
-			if finalDomain != "" {
-				outFile.WriteString(finalDomain + "\n")
+			finalURL := checkDomain(d, client)
+			if finalURL != "" {
+				outFile.WriteString(finalURL + "\n")
 				job.mu.Lock()
 				job.Success++
 				job.CurrentCount = job.Success + job.Failed
@@ -170,7 +196,7 @@ func processJob(slug, linkStr string, offset int) {
 				job.mu.Unlock()
 			}
 
-			if idx%1000 == 0 {
+			if idx%100 == 0 {
 				os.WriteFile(progressFile, []byte(strconv.Itoa(idx)), 0644)
 			}
 		}(domain, i)
@@ -179,7 +205,6 @@ func processJob(slug, linkStr string, offset int) {
 	wg.Wait()
 
 	outFile.Sync()
-	// TODO: upload results to storage service
 	job.mu.Lock()
 	job.Status = "completed"
 	job.DownloadURL = fmt.Sprintf("file://%s", resultFile)
@@ -188,12 +213,41 @@ func processJob(slug, linkStr string, offset int) {
 	os.Remove(progressFile)
 }
 
+func processJobFromDomains(slug string, domains []string, offset int) {
+	processDomains(slug, domains, offset)
+}
+
+func processJobFromLink(slug, linkStr string, offset int) {
+	resp, err := http.Get(linkStr)
+	if err != nil {
+		jobs[slug].mu.Lock()
+		jobs[slug].Status = "failed"
+		jobs[slug].mu.Unlock()
+		return
+	}
+	defer resp.Body.Close()
+
+	scanner := bufio.NewScanner(resp.Body)
+	domains := []string{}
+	for scanner.Scan() {
+		domain := strings.TrimSpace(scanner.Text())
+		if domain != "" {
+			domains = append(domains, domain)
+		}
+	}
+
+	processDomains(slug, domains, offset)
+}
+
 func checkDomain(domain string, client *http.Client) string {
 	if !strings.HasPrefix(domain, "http") {
 		domain = "https://" + domain
 	}
 
-	req, _ := http.NewRequest("HEAD", domain, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	req, _ := http.NewRequestWithContext(ctx, "HEAD", domain, nil)
 	req.Header.Set("User-Agent", "Mozilla/5.0")
 
 	resp, err := client.Do(req)
@@ -218,10 +272,9 @@ func checkDomain(domain string, client *http.Client) string {
 		}
 	}
 
-	// Extract domain from final URL
+	// Return full final URL
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		u, _ := url.Parse(resp.Request.URL.String())
-		return u.Host
+		return resp.Request.URL.String()
 	}
 
 	return ""

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -11,6 +12,7 @@ import (
 func main() {
 
 	http.HandleFunc("/status", statusHandler)
+	http.HandleFunc("/loopback", loopbackHandler)
 	http.HandleFunc("/validate", validateHandler)
 	http.HandleFunc("/output", outputHandler)
 
@@ -45,6 +47,6 @@ func main() {
 	touchFilename := "touch.txt"
 	os.OpenFile(touchFilename, os.O_RDONLY|os.O_CREATE, 0666)
 
-	
+	fmt.Print("Running\r\n")
 	workers.Serve(nil) // use http.DefaultServeMux
 }
