@@ -1,6 +1,9 @@
 build
 node_modules
 .wrangler
+.idea
+touch.txt
+validator_work
 
 .dev.vars*
 !.dev.vars.example
