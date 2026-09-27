@@ -1,2 +1,11 @@
+github.com/sgtdi/fswatcher v1.2.0 h1:uSJuMc3/Eo/vaPnZWpJ42EFYb5j38cZENmkszOV0yhw=
+github.com/sgtdi/fswatcher v1.2.0/go.mod h1:smzXnaqu0SYJQNIwGLLkvRkpH4RdEACB7avMSsSaqjQ=
+github.com/sgtdi/vai v1.2.1 h1:9mGCwU4lYFanF5LSlTXJE3Q99bKODXp9ngIv0FcY1pE=
+github.com/sgtdi/vai v1.2.1/go.mod h1:bR5aTw/HByQ6YG5xdFAv+Wso1lIQtE4ojF/Wi1rNxaI=
 github.com/syumai/workers-go v0.35.0 h1:Dahzjv6QATyZnnkfk6u7DGXH76zD+sk9+x12D520/yQ=
 github.com/syumai/workers-go v0.35.0/go.mod h1:nGxyOzoikm2rDoGAduCQucbljH9wjhdk+4Rk4leKCBQ=
+golang.org/x/sys v0.40.0 h1:DBZZqJ2Rkml6QMQsZywtnjnnGvHza6BTfYFWY9kjEWQ=
+golang.org/x/sys v0.40.0/go.mod h1:OgkHotnGiDImocRcuBABYBEXf8A9a87e/uXjp9XT3ks=
+gopkg.in/check.v1 v0.0.0-20161208181325-20d25e280405/go.mod h1:Co6ibVJAznAaIkqp8huTwlJQCZ016jof/cbN4VW5Yz0=
+gopkg.in/yaml.v3 v3.0.1 h1:fxVm/GzAzEWqLHuvctI91KS9hhNmmWOoWu0XTYJS7CA=
+gopkg.in/yaml.v3 v3.0.1/go.mod h1:K4uyk7z7BCEPqu6E+C64Yfv1cQ7kz7rIZviUmN+EgEM=

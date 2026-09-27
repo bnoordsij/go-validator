@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"crypto/md5"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -30,7 +31,7 @@ type Job struct {
 var (
 	jobs = make(map[string]*Job)
 	jobsMu sync.Mutex
-	workDir = "/tmp/validator_work"
+	workDir = "./validator_work"
 )
 
 func init() {
@@ -68,10 +69,31 @@ func loopbackHandler(w http.ResponseWriter, r *http.Request) {
     w.Write(body)
 }
 
+func outputHandler(w http.ResponseWriter, r *http.Request) {
+    linkStr := r.URL.Query().Get("link")
+    if linkStr == "" {
+            http.Error(w, "missing ?link parameter", 400)
+            return
+    }
+
+    slug := slugify(linkStr)
+	resultFile := filepath.Join(workDir, slug+".txt")
+	_, err := os.Stat(resultFile)
+// 	check(err)
+	if (errors.Is(err, os.ErrNotExist)) {
+        fmt.Fprintf(w, "No file found")
+	    return
+	}
+	data, err := os.ReadFile(resultFile)
+	check(err)
+    fmt.Fprintf(w, string(data))
+}
+
 func validateHandler(w http.ResponseWriter, r *http.Request) {
 	var domains []string
 	var source string
 	offset := 0
+	uuid := r.URL.Query().Get("uuid")
 	if o := r.URL.Query().Get("offset"); o != "" {
 		offset, _ = strconv.Atoi(o)
 	}
@@ -81,16 +103,23 @@ func validateHandler(w http.ResponseWriter, r *http.Request) {
 		scanner := bufio.NewScanner(r.Body)
 		for scanner.Scan() {
 			domain := strings.TrimSpace(scanner.Text())
-			if domain != "" {
-				domains = append(domains, domain)
+			if domain == "" {
+			    continue
 			}
+			if (!strings.HasPrefix(domain, "{") || !strings.HasPrefix(domain, "[")) { // json data
+//         		http.Error(w, "body should not be json", 400)
+                continue
+            }
+
+            domains = append(domains, domain)
 		}
 		source = "body"
 	}
 
 	// Fallback to ?link parameter
-	if len(domains) == 0 {
-		linkStr := r.URL.Query().Get("link")
+	linkStr := ""
+	if len(domains) < 2 {
+		linkStr = r.URL.Query().Get("link")
 		if linkStr == "" {
 			http.Error(w, "missing body domains or ?link parameter", 400)
 			return
@@ -98,9 +127,12 @@ func validateHandler(w http.ResponseWriter, r *http.Request) {
 		source = "link:" + linkStr
 	}
 
-// 	w.Header().Set("Content-Type", "application/json")
-// 	fmt.Fprintf(w, `{"method":"%s","body":"%s","domains":"%s"}`,
-// 		r.Method, r.Body, strings.Join(domains, " _ "))
+    if (uuid != "") {
+        source = uuid // better than slug
+    }
+//     w.Header().Set("Content-Type", "application/json")
+//     fmt.Fprintf(w, `{"method":"%s","body":"%s","domains":"%s"}`,
+//         r.Method, r.Body, strings.Join(domains, " _ "))
 //     return
 
 	slug := slugify(source)
@@ -108,6 +140,7 @@ func validateHandler(w http.ResponseWriter, r *http.Request) {
 	job, exists := jobs[slug]
 	jobsMu.Unlock()
 
+    exists = false
 	if !exists {
 		job = &Job{Status: "pending"}
 		jobsMu.Lock()
@@ -115,9 +148,11 @@ func validateHandler(w http.ResponseWriter, r *http.Request) {
 		jobsMu.Unlock()
 
 		if source == "body" {
-			go processJobFromDomains(slug, domains, offset)
-		} else {
-			go processJobFromLink(slug, source[5:], offset)
+		    fmt.Print("body\n")
+			 processJobFromDomains(slug, domains, offset)
+		} else if linkStr != "" {
+		    fmt.Print("link\n")
+			 processJobFromLink(slug, linkStr, offset)
 		}
 	}
 
@@ -125,22 +160,36 @@ func validateHandler(w http.ResponseWriter, r *http.Request) {
 	defer job.mu.Unlock()
 
 	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w, `{"count":"%s","status":"%s","total":%d,"success":%d,"failed":%d,"current_domain":"%s","current_count":%d,"download_url":"%s"}`,
-		len(domains), job.Status, job.Total, job.Success, job.Failed, job.CurrentDomain, job.CurrentCount, job.DownloadURL)
+	fmt.Fprintf(w, `{"slug":"%s","status":"%s","total":%d,"success":%d,"failed":%d,"current_domain":"%s","current_count":%d,"download_url":"%s"}`,
+		source, job.Status, job.Total, job.Success, job.Failed, job.CurrentDomain, job.CurrentCount, job.DownloadURL)
 }
 
-func outputHandler(w http.ResponseWriter, r *http.Request) {
-        linkStr := r.URL.Query().Get("link")
-        if linkStr == "" {
-                http.Error(w, "missing ?link parameter", 400)
-                return
-        }
+func processJobFromDomains(slug string, domains []string, offset int) {
+	processDomains(slug, domains, offset)
+}
 
-        slug := slugify(linkStr)
-	resultFile := filepath.Join(workDir, slug+".txt")
-	data, err := os.ReadFile(resultFile)
-	check(err)
-    	fmt.Fprintf(w, string(data))
+func processJobFromLink(slug, linkStr string, offset int) {
+	resp, err := http.Get(linkStr)
+	defer resp.Body.Close()
+	if err != nil {
+        job, _ := jobs[slug] // reload
+        job.mu.Lock()
+        job.Status = "failed"
+        job.mu.Unlock()
+        jobs[slug] = job
+        return
+	}
+
+	scanner := bufio.NewScanner(resp.Body)
+	domains := []string{}
+	for scanner.Scan() {
+		domain := strings.TrimSpace(scanner.Text())
+		if domain != "" {
+			domains = append(domains, domain)
+		}
+	}
+
+	processDomains(slug, domains, offset)
 }
 
 func processDomains(slug string, domains []string, offset int) {
@@ -169,7 +218,7 @@ func processDomains(slug string, domains []string, offset int) {
 	var wg sync.WaitGroup
 
 	for i, domain := range domains {
-	    fmt.Printf("%d _ " + domain + "\r\n", i)
+        fmt.Printf("%d _ " + domain + "\r\n", i)
 		if i < offset {
 			continue
 		}
@@ -213,41 +262,16 @@ func processDomains(slug string, domains []string, offset int) {
 	os.Remove(progressFile)
 }
 
-func processJobFromDomains(slug string, domains []string, offset int) {
-	processDomains(slug, domains, offset)
-}
-
-func processJobFromLink(slug, linkStr string, offset int) {
-	resp, err := http.Get(linkStr)
-	if err != nil {
-		jobs[slug].mu.Lock()
-		jobs[slug].Status = "failed"
-		jobs[slug].mu.Unlock()
-		return
-	}
-	defer resp.Body.Close()
-
-	scanner := bufio.NewScanner(resp.Body)
-	domains := []string{}
-	for scanner.Scan() {
-		domain := strings.TrimSpace(scanner.Text())
-		if domain != "" {
-			domains = append(domains, domain)
-		}
-	}
-
-	processDomains(slug, domains, offset)
-}
-
 func checkDomain(domain string, client *http.Client) string {
-	if !strings.HasPrefix(domain, "http") {
+    if (!strings.HasPrefix(domain, "http")) {
 		domain = "https://" + domain
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	req, _ := http.NewRequestWithContext(ctx, "HEAD", domain, nil)
+	req, err := http.NewRequestWithContext(ctx, "HEAD", domain, nil)
+	check(err)
 	req.Header.Set("User-Agent", "Mozilla/5.0")
 
 	resp, err := client.Do(req)
