@@ -86,7 +86,7 @@ func outputHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	data, err := os.ReadFile(resultFile)
 	check(err)
-    fmt.Fprintf(w, string(data))
+	w.Write(data)
 }
 
 func validateHandler(w http.ResponseWriter, r *http.Request) {
@@ -106,10 +106,9 @@ func validateHandler(w http.ResponseWriter, r *http.Request) {
 			if domain == "" {
 			    continue
 			}
-			if (!strings.HasPrefix(domain, "{") || !strings.HasPrefix(domain, "[")) { // json data
-//         		http.Error(w, "body should not be json", 400)
-                continue
-            }
+			if strings.HasPrefix(domain, "{") || strings.HasPrefix(domain, "[") { // json data
+				continue
+			}
 
             domains = append(domains, domain)
 		}
@@ -118,7 +117,7 @@ func validateHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Fallback to ?link parameter
 	linkStr := ""
-	if len(domains) < 2 {
+	if len(domains) == 0 {
 		linkStr = r.URL.Query().Get("link")
 		if linkStr == "" {
 			http.Error(w, "missing body domains or ?link parameter", 400)
@@ -147,13 +146,7 @@ func validateHandler(w http.ResponseWriter, r *http.Request) {
 		jobs[slug] = job
 		jobsMu.Unlock()
 
-		if source == "body" {
-		    fmt.Print("body\n")
-			 processJobFromDomains(slug, domains, offset)
-		} else if linkStr != "" {
-		    fmt.Print("link\n")
-			 processJobFromLink(slug, linkStr, offset)
-		}
+		processJob(slug, domains, linkStr, offset)
 	}
 
 	job.mu.Lock()
@@ -164,32 +157,43 @@ func validateHandler(w http.ResponseWriter, r *http.Request) {
 		source, job.Status, job.Total, job.Success, job.Failed, job.CurrentDomain, job.CurrentCount, job.DownloadURL)
 }
 
-func processJobFromDomains(slug string, domains []string, offset int) {
-	processDomains(slug, domains, offset)
-}
+func processJob(slug string, domains []string, linkStr string, offset int) {
+	if linkStr != "" {
+		resp, err := http.Get(linkStr)
+		if err != nil {
+			markJobFailed(slug)
+			return
+		}
+		defer resp.Body.Close()
 
-func processJobFromLink(slug, linkStr string, offset int) {
-	resp, err := http.Get(linkStr)
-	defer resp.Body.Close()
-	if err != nil {
-        job, _ := jobs[slug] // reload
-        job.mu.Lock()
-        job.Status = "failed"
-        job.mu.Unlock()
-        jobs[slug] = job
-        return
-	}
-
-	scanner := bufio.NewScanner(resp.Body)
-	domains := []string{}
-	for scanner.Scan() {
-		domain := strings.TrimSpace(scanner.Text())
-		if domain != "" {
-			domains = append(domains, domain)
+		scanner := bufio.NewScanner(resp.Body)
+		domains = make([]string, 0)
+		for scanner.Scan() {
+			domain := strings.TrimSpace(scanner.Text())
+			if domain != "" {
+				domains = append(domains, domain)
+			}
+		}
+		if err := scanner.Err(); err != nil {
+			markJobFailed(slug)
+			return
 		}
 	}
 
 	processDomains(slug, domains, offset)
+}
+
+func markJobFailed(slug string) {
+	jobsMu.Lock()
+	job := jobs[slug]
+	jobsMu.Unlock()
+	if job == nil {
+		return
+	}
+
+	job.mu.Lock()
+	job.Status = "failed"
+	job.mu.Unlock()
 }
 
 func processDomains(slug string, domains []string, offset int) {
@@ -303,4 +307,3 @@ func checkDomain(domain string, client *http.Client) string {
 
 	return ""
 }
-

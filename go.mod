@@ -1,4 +1,4 @@
-module main
+module go-validator
 
 go 1.25.4
 
