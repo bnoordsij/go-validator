@@ -18,6 +18,57 @@ func (f roundTripperFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 	return f(req)
 }
 
+func TestAuthEndpointVerifiesAPIKey(t *testing.T) {
+	apiKey := os.Getenv("API_KEY")
+	if apiKey == "" {
+		t.Skip("API_KEY is not set in the environment")
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/auth", authHandler)
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	req, err := http.NewRequest(http.MethodPost, server.URL+"/auth", nil)
+	if err != nil {
+		t.Fatalf("create auth request: %v", err)
+	}
+	req.Header.Set("X-API-Key", apiKey)
+
+	resp, err := server.Client().Do(req)
+	if err != nil {
+		t.Fatalf("POST /auth: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("POST /auth status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+
+	var result struct {
+		Status string `json:"status"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatalf("decode auth response: %v", err)
+	}
+	if result.Status != "authenticated" {
+		t.Fatalf("auth response status = %q, want authenticated", result.Status)
+	}
+
+	badReq, err := http.NewRequest(http.MethodPost, server.URL+"/auth", nil)
+	if err != nil {
+		t.Fatalf("create invalid auth request: %v", err)
+	}
+	badReq.Header.Set("X-API-Key", apiKey+"-invalid")
+	badResp, err := server.Client().Do(badReq)
+	if err != nil {
+		t.Fatalf("POST /auth with invalid key: %v", err)
+	}
+	defer badResp.Body.Close()
+	if badResp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("POST /auth with invalid key status = %d, want %d", badResp.StatusCode, http.StatusUnauthorized)
+	}
+}
+
 func TestValidatePostBodyWritesDomainsAndReturnsJSON(t *testing.T) {
 	oldWorkDir := workDir
 	workDir = t.TempDir()

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"crypto/md5"
+	"crypto/subtle"
 	"errors"
 	"fmt"
 	"io"
@@ -52,6 +53,22 @@ func slugify(s string) string {
 func statusHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	fmt.Fprintf(w, `{"status":"ok"}`)
+}
+
+func authHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	apiKey := os.Getenv("API_KEY")
+	if apiKey == "" {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		fmt.Fprint(w, `{"error":"auth is not configured"}`)
+		return
+	}
+	if subtle.ConstantTimeCompare([]byte(r.Header.Get("X-API-Key")), []byte(apiKey)) != 1 {
+		w.WriteHeader(http.StatusUnauthorized)
+		fmt.Fprint(w, `{"error":"unauthorized"}`)
+		return
+	}
+	fmt.Fprint(w, `{"status":"authenticated"}`)
 }
 
 func loopbackHandler(w http.ResponseWriter, r *http.Request) {

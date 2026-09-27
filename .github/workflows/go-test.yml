@@ -14,6 +14,8 @@ jobs:
     steps:
       - name: Check out code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -21,4 +23,17 @@ jobs:
           go-version-file: go.mod
 
       - name: Run tests
+        env:
+          API_KEY: ${{ secrets.API_KEY }}
         run: go test ./...
+
+      - name: Check for known Go vulnerabilities
+        uses: golang/govulncheck-action@v1
+        with:
+          go-version-file: go.mod
+          go-package: ./...
+
+      - name: Scan commit changes for secrets
+        uses: trufflesecurity/trufflehog@v3.97.9
+        with:
+          extra_args: --results=verified,unknown

@@ -12,6 +12,7 @@ import (
 func main() {
 
 	http.HandleFunc("/status", statusHandler)
+	http.HandleFunc("/auth", authHandler)
 	http.HandleFunc("/loopback", loopbackHandler)
 	http.HandleFunc("/validate", validateHandler)
 	http.HandleFunc("/output", outputHandler)
